@@ -372,6 +372,42 @@ input[type=range]::-webkit-slider-thumb {
   background: var(--border);
 }
 
+/* Intensity switcher */
+.switcher-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.switcher-btn {
+  flex: 1;
+  min-width: 48px;
+  padding: 10px 6px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.switcher-btn:active { transform: scale(0.95); }
+.switcher-btn.active {
+  background: rgba(0,229,200,0.12);
+  border-color: var(--teal);
+  color: var(--teal);
+}
+.switcher-btn.recommended {
+  border-color: rgba(0,229,200,0.4);
+  color: var(--text);
+}
+.switcher-btn .btn-amp { display: block; font-size: 0.85rem; }
+.switcher-btn .btn-kw  { display: block; font-size: 0.58rem; color: var(--muted); margin-top: 2px; }
+.switcher-btn.active .btn-kw { color: rgba(0,229,200,0.6); }
+
 /* Detail table */
 .detail-table {
   width: 100%;
@@ -446,8 +482,14 @@ input[type=range]::-webkit-slider-thumb {
 
     <div class="result-main">
       <div class="result-intensity" id="resIntensity">—</div>
-      <div class="result-intensity-label">Intensidad recomendada</div>
+      <div class="result-intensity-label" id="resIntensityLabel">Intensidad recomendada</div>
       <div class="result-power" id="resPower"></div>
+    </div>
+
+    <!-- INTENSITY SWITCHER -->
+    <div class="card" id="switcherCard" style="padding:14px">
+      <div class="card-label" style="margin-bottom:10px">🔌 Cambiar intensidad</div>
+      <div class="switcher-row" id="switcherRow"></div>
     </div>
 
     <div class="result-grid">
@@ -670,25 +712,75 @@ function calculate() {
     chosenMins = minutesForRange(socPct, chosenFinalPct, maxMode.key);
   }
 
-  // Render
+  // Build switcher buttons
+  buildSwitcher(socPct, availMins, chosen.amps);
+
+  // Render chosen mode
+  renderResult(chosen, socPct, startTime, availMins, false);
+
+  const sec = document.getElementById('resultSection');
+  sec.classList.remove('visible');
+  void sec.offsetWidth;
+  sec.classList.add('visible');
+  sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ─── BUILD SWITCHER ──────────────────────────────────────────────────────────
+function buildSwitcher(socPct, availMins, recommendedAmps) {
+  const row = document.getElementById('switcherRow');
+  row.innerHTML = '';
+  MODES.forEach(mode => {
+    const btn = document.createElement('button');
+    btn.className = 'switcher-btn' +
+      (mode.amps === recommendedAmps ? ' active' : '') +
+      (mode.amps === recommendedAmps ? ' recommended' : '');
+    btn.innerHTML = `<span class="btn-amp">${mode.amps}A</span><span class="btn-kw">${mode.kw} kW</span>`;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.switcher-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const startTime = document.getElementById('startTime').value;
+      renderResult(mode, socPct, startTime, availMins, mode.amps !== recommendedAmps);
+    });
+    row.appendChild(btn);
+  });
+}
+
+// ─── RENDER RESULT ───────────────────────────────────────────────────────────
+function renderResult(chosen, socPct, startTime, availMins, isManual) {
+  const connLabels = { 6:'Enchufe antiguo', 8:'Enchufe doméstico', 10:'Base / Schuko', 16:'Wallbox estándar', 30:'Wallbox máximo' };
+
+  // Compute final % and time
+  let chosenMins, chosenFinalPct;
+  const totalTo100 = minutesForRange(socPct, 100, chosen.key);
+  if (totalTo100 <= availMins + 10) {
+    chosenMins = totalTo100;
+    chosenFinalPct = 100;
+  } else {
+    let lo = socPct, hi = 100, best = socPct;
+    for (let i = 0; i < 20; i++) {
+      const mid = (lo + hi) / 2;
+      const m = minutesForRange(socPct, mid, chosen.key);
+      if (m <= availMins) { best = mid; lo = mid; } else { hi = mid; }
+    }
+    chosenFinalPct = Math.floor(best);
+    chosenMins = minutesForRange(socPct, chosenFinalPct, chosen.key);
+  }
+
   const finishTime = addMins(startTime, chosenMins);
   const margin = Math.round(availMins - chosenMins);
   const reachable = chosenFinalPct >= 100;
 
-  // Intensity display
-  document.getElementById('resIntensity').innerHTML =
-    `${chosen.amps}<span> A</span>`;
-  const connLabels = { 6:'Enchufe antiguo / instalación delicada', 8:'Enchufe doméstico seguro', 10:'Base doméstica / Schuko', 16:'Wallbox estándar', 30:'Wallbox máximo' };
-  document.getElementById('resPower').textContent =
-    `≈ ${chosen.kw} kW · ${connLabels[chosen.amps] || ''}`;
+  // Header
+  document.getElementById('resIntensity').innerHTML = `${chosen.amps}<span> A</span>`;
+  document.getElementById('resIntensityLabel').textContent = isManual ? 'Intensidad seleccionada' : 'Intensidad recomendada';
+  document.getElementById('resPower').textContent = `≈ ${chosen.kw} kW · ${connLabels[chosen.amps] || ''}`;
 
-  // Final % tile
+  // Tiles
   const fpEl = document.getElementById('resFinalPct');
   fpEl.textContent = reachable ? '100 %' : `${chosenFinalPct} %`;
   fpEl.className = 'result-tile-value ' + (reachable ? 'ok' : 'warn');
 
   document.getElementById('resTime').textContent = fmtMins(chosenMins);
-
   document.getElementById('resFinish').textContent = finishTime;
 
   const marginEl = document.getElementById('resMargin');
@@ -702,27 +794,22 @@ function calculate() {
 
   // Notice
   const noticeEl = document.getElementById('resNotice');
+  const endTime = document.getElementById('endTime').value;
   if (!reachable) {
     noticeEl.className = 'notice error';
-    noticeEl.textContent = `⚠️ Con la máxima intensidad (30A) solo llegarás al ${chosenFinalPct}% a las ${endTime}. Necesitas más tiempo o aceptar un % menor.`;
-  } else if (chosen.amps <= 8 && margin > 30) {
+    noticeEl.textContent = `⚠️ A ${chosen.amps}A solo llegarás al ${chosenFinalPct}% a las ${endTime}. Necesitas más tiempo o una intensidad mayor.`;
+  } else if (chosen.amps <= 8) {
     noticeEl.className = 'notice warn';
-    noticeEl.textContent = `⚠️ Con ${chosen.amps}A llegas justo, pero es una carga muy lenta. Si tienes opción, sube a 10A o 16A para más margen.`;
-  } else if (chosen.amps <= 10 && margin > 30) {
-    noticeEl.className = 'notice info';
-    noticeEl.textContent = `✅ Con ${chosen.amps}A tienes margen de sobra. Puedes empezar más tarde o subir a 16A como respaldo.`;
-  } else if (reachable) {
-    noticeEl.className = 'notice info';
-    noticeEl.textContent = `✅ Con ${chosen.amps}A alcanzas el 100% a las ${finishTime}, ${margin >= 0 ? `${margin} min antes` : `${Math.abs(margin)} min después`} de tu objetivo. Los tiempos del tramo 90–100% ya incluyen el buffer de balanceo de celdas.`;
+    noticeEl.textContent = `⚠️ Intensidad muy baja. Llegas al 100% a las ${finishTime} pero con poco margen. Si puedes, sube a 10A o 16A.`;
   } else {
     noticeEl.className = 'notice info';
-    noticeEl.textContent = `✅ Carga completada estimada a las ${finishTime}.`;
+    noticeEl.textContent = `✅ A ${chosen.amps}A llegas al 100% a las ${finishTime}, ${margin >= 0 ? `${margin} min antes` : `${Math.abs(margin)} min después`} de tu objetivo. Los tiempos del tramo 90–100% ya incluyen el buffer de balanceo.`;
   }
 
   // Detail table
   const phaseBreaks = [
-    { label: `${socPct}% → 90%`,      from: socPct, to: 90  },
-    { label: '90% → 100% ⚡ balanceo', from: 90,     to: 100 },
+    { label: `${socPct}% → 90%`,       from: socPct, to: 90  },
+    { label: '90% → 100% ⚡ balanceo',  from: 90,     to: 100 },
   ].filter(p => p.from < p.to && p.from < chosenFinalPct);
 
   let rows = '';
@@ -733,12 +820,6 @@ function calculate() {
     rows += `<tr><td>${p.label}</td><td>${fmtMins(mins)}</td></tr>`;
   }
   document.getElementById('resDetail').innerHTML = rows;
-
-  const sec = document.getElementById('resultSection');
-  sec.classList.remove('visible');
-  void sec.offsetWidth;
-  sec.classList.add('visible');
-  sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function showError(msg) {
